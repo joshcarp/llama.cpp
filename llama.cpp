@@ -261,7 +261,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_COMMAND_R,       "command-r"  },
     { LLM_ARCH_DBRX,            "dbrx"       },
     { LLM_ARCH_OLMO,            "olmo"       },
-    { LLM_ARCH_OPENELM,            "openelm" },
+    { LLM_ARCH_OPENELM,         "openelm"    },
     { LLM_ARCH_UNKNOWN,         "(unknown)"  },
 };
 
@@ -299,6 +299,9 @@ enum llm_kv {
     LLM_KV_ATTENTION_LAYERNORM_EPS,
     LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,
     LLM_KV_ATTENTION_CAUSAL,
+    LLM_FFN_MULTIPLIERS,
+    LLM_NUM_KV_HEADS,
+    LLM_NUM_QUERY_HEADS,
 
     LLM_KV_ROPE_DIMENSION_COUNT,
     LLM_KV_ROPE_FREQ_BASE,
@@ -375,6 +378,9 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
     { LLM_KV_ATTENTION_LAYERNORM_EPS,       "%s.attention.layer_norm_epsilon"     },
     { LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,   "%s.attention.layer_norm_rms_epsilon" },
     { LLM_KV_ATTENTION_CAUSAL,              "%s.attention.causal"                 },
+    { LLM_FFN_MULTIPLIERS,                  "%s.ffn_multipliers"                  },
+    { LLM_NUM_KV_HEADS,                       "%s.num_kv_heads"                     },
+    { LLM_NUM_QUERY_HEADS,                    "%s.num_query_heads"                  },
 
     { LLM_KV_ROPE_DIMENSION_COUNT,          "%s.rope.dimension_count"                 },
     { LLM_KV_ROPE_FREQ_BASE,                "%s.rope.freq_base"                       },
@@ -1032,16 +1038,14 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
             {
                 { LLM_TENSOR_TOKEN_EMBD,      "token_embd" },
                 { LLM_TENSOR_OUTPUT_NORM,     "output_norm" },
-                { LLM_TENSOR_OUTPUT,          "output" },
-                { LLM_TENSOR_ATTN_NORM,       "blk.%d.attn_norm" },
-                { LLM_TENSOR_ATTN_QKV,        "blk.%d.attn_qkv" },
-                { LLM_TENSOR_ATTN_Q,          "blk.%d.attn_q" },
-                { LLM_TENSOR_ATTN_K,          "blk.%d.attn_k" },
-                { LLM_TENSOR_ATTN_V,          "blk.%d.attn_v" },
-                { LLM_TENSOR_ATTN_OUT,        "blk.%d.attn_output" },
-                { LLM_TENSOR_FFN_NORM,        "blk.%d.ffn_norm" },
-                { LLM_TENSOR_FFN_DOWN,        "blk.%d.ffn_down" },
+                { LLM_TENSOR_ATTN_OUT,          "attn_output.weight" },
+                { LLM_TENSOR_ATTN_K_NORM,       "blk.%d.attn_k_norm" },
+                { LLM_TENSOR_ATTN_Q_NORM,        "blk.%d.attn_qkv" },
+                { LLM_TENSOR_ATTN_QKV,          "blk.%d.attn_qkv" },
+                { LLM_TENSOR_ATTN_NORM,          "blk.%d.attn_norm" },
                 { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
+                { LLM_TENSOR_FFN_DOWN,        "blk.%d.ffn_down" },
+                { LLM_TENSOR_FFN_NORM,        "blk.%d.ffn_norm" },
             },
         },
     {
@@ -5862,10 +5866,19 @@ static bool llm_load_tensors(
             {
                 model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab });
 
+                std::vector<float> ffn_multipliers;
+                ml.get_key(LLM_FFN_MULTIPLIERS, ffn_multipliers);
+
+                std::vector<float> num_kv_heads;
+                ml.get_key(LLM_FFN_MULTIPLIERS, ffn_multipliers);
+
+                LLM_FFN_MULTIPLIERS,
+LLM_NUM_KV_HEADS,
+LLM_NUM_QUERY_HEADS,
                 // output
                 {
                     model.output_norm = ml.create_tensor(ctx_output, tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd });
-                    model.output = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab });
+                    // model.output = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab });
                 }
 
                 for (int i = 0; i < n_layer; ++i) {
@@ -5873,7 +5886,7 @@ static bool llm_load_tensors(
                     ggml_context* ctx_split = ctx_for_layer_split(i);
 
                     auto& layer = model.layers[i];
-
+                    // hereas
                     layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), { n_embd });
 
                     layer.wqkv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_QKV, "weight", i), { n_embd, n_embd + 2 * n_embd_gqa }, false);

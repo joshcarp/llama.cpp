@@ -104,10 +104,7 @@ class Model(ABC):
             self.gguf_writer.add_feed_forward_length(n_ff)
             print(f"gguf: feed forward length = {n_ff}")
 
-        if (head_dim := self.find_hparam(["head_dim"], optional=True)) is not None:
-            n_head = n_embd // head_dim
-        else:
-            n_head = self.find_hparam(["num_attention_heads", "n_head"])
+        n_head = self.find_hparam(["num_attention_heads", "n_head"])
         self.gguf_writer.add_head_count(n_head)
         print(f"gguf: head count = {n_head}")
 
@@ -2822,11 +2819,57 @@ class OlmoModel(Model):
 class OpenELM(Model):
     model_arch = gguf.MODEL_ARCH.OPENELM
 
+    # def set_gguf_parameters(self):
+    #     hidden_dim = self.hparams["n_embd"]
+    #     inner_dim = 4 * hidden_dim
+    #     hidden_dim = int(2 * inner_dim / 3)
+    #     multiple_of = 256
+    #     ff_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+    #
+    #     block_count = self.hparams["num_transformer_layers"]
+    #
+    #     self.gguf_writer.add_name("Refact")
+    #     # refact uses Alibi. So this is from config.json which might be used by training.
+    #     self.gguf_writer.add_context_length(self.hparams["n_positions"])
+    #     self.gguf_writer.add_embedding_length(self.hparams["n_embd"])
+    #
+    #     self.gguf_writer.add_feed_forward_length(ff_dim)
+    #     self.gguf_writer.add_block_count(block_count)
+    #     self.gguf_writer.add_head_count(self.hparams["n_head"])
+    #     self.gguf_writer.add_head_count_kv(1)
+    #     self.gguf_writer.add_layer_norm_rms_eps(self.hparams["layer_norm_epsilon"])
+    #     self.gguf_writer.add_file_type(self.ftype)
     def set_gguf_parameters(self):
-        super().set_gguf_parameters()
+        # super().set_gguf_parameters()
         self.gguf_writer.add_layer_norm_eps(1e-5)
-        if "clip_qkv" in self.hparams is not None:
-            self.gguf_writer.add_clamp_kqv(self.hparams["clip_qkv"])
+        self.gguf_writer.add_layer_norm_rms_eps(1e-6) # https://github.com/apple/corenet/blob/0333b1fbb29c31809663c4e6de2654b9ff2d27de/mlx_examples/open_elm/open_elm.py#L20
+        self.block_count = self.find_hparam(["num_transformer_layers"])
+        n_embd = self.find_hparam(["model_dim"])
+        self.gguf_writer.add_embedding_length(n_embd)
+        head_dim = self.find_hparam(["head_dim"])
+        n_head = n_embd // head_dim
+        rot_pct = 1.0
+        self.gguf_writer.add_name("OpenElm")
+        self.gguf_writer.add_context_length(self.find_hparam(["max_context_length"]))
+        self.gguf_writer.add_embedding_length(n_embd)
+        self.gguf_writer.add_feed_forward_length(8192) #TODO:
+        self.gguf_writer.add_block_count(self.block_count)
+        self.gguf_writer.add_head_count(n_head)
+        self.gguf_writer.add_head_count_kv(n_head)
+        self.gguf_writer.add_rope_dimension_count(int(rot_pct * n_embd) // n_head)
+        self.gguf_writer.add_file_type(self.ftype)
+        self.gguf_writer.add_array("num_query_heads", self.find_hparam(["num_query_heads"]))
+        self.gguf_writer.add_array("num_kv_heads", self.find_hparam(["num_kv_heads"]))
+        self.gguf_writer.add_array("qkv_multipliers", self.find_hparam(["num_kv_heads"]))
+        # self.gguf_writer.add_tensor(new_name, data)
+        # self.gguf_writer.add_embedding_length(hparams["hidden_size"])
+        # self.gguf_writer.add_embedding_length(1e-5)
+        #transformer.token_embeddings.weight
+        # if self.ftype == 1 and data_dtype == np.float32 and name.endswith(".weight") and n_dims == 2:
+        #     data = data.astype(np.float16)
+        # self.gguf_writer.add_tensor("output.weight", data)
+
+
 
     def set_vocab(self):
         from sentencepiece import SentencePieceProcessor
@@ -2880,6 +2923,7 @@ class OpenELM(Model):
                     scores[token_id] = -1000.0
                     toktypes[token_id] = SentencePieceTokenTypes.USER_DEFINED
 
+
         self.gguf_writer.add_tokenizer_model("llama")
         self.gguf_writer.add_token_list(tokens)
         self.gguf_writer.add_token_scores(scores)
@@ -2895,6 +2939,7 @@ class OpenELM(Model):
         tensor_map = gguf.get_tensor_name_map(self.model_arch, block_count)
         n_head = self.hparams.get("model_dim") //  self.hparams.get("head_dim") # num_attention_heads
         n_kv_head = self.hparams.get("num_kv_heads")
+        # tok_embd_name = gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.TOKEN_EMBD] + ".weight"
 
         for name, data_torch in self.get_tensors():
             old_dtype = data_torch.dtype
@@ -2905,19 +2950,27 @@ class OpenELM(Model):
 
             data = data_torch.numpy()
 
-            if name.endswith("q_proj.weight"):
-                data = permute(data, n_head, n_head)
-            if name.endswith("k_proj.weight"):
-                data = permute(data, n_head, n_kv_head)
+
+            # if name.endswith("q_proj.weight"):
+            #     data = permute(data, n_head, n_head)
+            # if name.endswith("k_proj.weight"):
+            #     data = permute(data, n_head, n_kv_head)
 
             data = data.squeeze()
-
+            # if name == "word_embeddings.weight":
+            #     self.gguf_writer.add_tensor("output.weight", data)
             # map tensor names
             new_name = tensor_map.get_name(name, try_suffixes=(".weight", ".bias"))
             if new_name is None:
                 print(f"Can not map tensor {name!r}")
                 sys.exit()
-
+            # if "token_embd" in new_name:
+            #     new_name += ".weight"
+            # if "output" == new_name:
+            #     new_name += ".weight"
+            # if "transformer.norm.weight" == name:
+            #     new_name = "output_norm.weight"
+            new_name += ".weight"
             n_dims = len(data.shape)
             data_dtype = data.dtype
 
@@ -2934,6 +2987,8 @@ class OpenELM(Model):
                 data = data.astype(np.float16)
 
             print(f"{new_name}, n_dims = {n_dims}, {old_dtype} --> {data.dtype}")
+            # if name == "word_embeddings.weight":
+            #     new_name = "output.weight"
 
             self.gguf_writer.add_tensor(new_name, data)
 
