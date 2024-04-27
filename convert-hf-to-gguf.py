@@ -2850,6 +2850,10 @@ class OpenELM(Model):
         n_head = n_embd // head_dim
         rot_pct = 1.0
         self.gguf_writer.add_name("OpenElm")
+        self.gguf_writer.add_float32("a_min", 0.5)
+        self.gguf_writer.add_float32("a_max", 1)
+        self.gguf_writer.add_float32("b_min", 0.5)
+        self.gguf_writer.add_float32("b_max", 4.0)
         self.gguf_writer.add_context_length(self.find_hparam(["max_context_length"]))
         self.gguf_writer.add_embedding_length(n_embd)
         self.gguf_writer.add_feed_forward_length(8192) #TODO:
@@ -2858,9 +2862,9 @@ class OpenELM(Model):
         self.gguf_writer.add_head_count_kv(n_head)
         self.gguf_writer.add_rope_dimension_count(int(rot_pct * n_embd) // n_head)
         self.gguf_writer.add_file_type(self.ftype)
-        self.gguf_writer.add_array("num_query_heads", self.find_hparam(["num_query_heads"]))
-        self.gguf_writer.add_array("num_kv_heads", self.find_hparam(["num_kv_heads"]))
-        self.gguf_writer.add_array("qkv_multipliers", self.find_hparam(["num_kv_heads"]))
+        # self.gguf_writer.add_array("num_query_heads", self.find_hparam(["num_query_heads"]))
+        # self.gguf_writer.add_array("num_kv_heads", self.find_hparam(["num_kv_heads"]))
+        # self.gguf_writer.add_array("qkv_multipliers", self.find_hparam(["num_kv_heads"]))
         # self.gguf_writer.add_tensor(new_name, data)
         # self.gguf_writer.add_embedding_length(hparams["hidden_size"])
         # self.gguf_writer.add_embedding_length(1e-5)
@@ -2939,6 +2943,7 @@ class OpenELM(Model):
         tensor_map = gguf.get_tensor_name_map(self.model_arch, block_count)
         n_head = self.hparams.get("model_dim") //  self.hparams.get("head_dim") # num_attention_heads
         n_kv_head = self.hparams.get("num_kv_heads")
+
         # tok_embd_name = gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.TOKEN_EMBD] + ".weight"
 
         for name, data_torch in self.get_tensors():
@@ -2989,6 +2994,11 @@ class OpenELM(Model):
             print(f"{new_name}, n_dims = {n_dims}, {old_dtype} --> {data.dtype}")
             # if name == "word_embeddings.weight":
             #     new_name = "output.weight"
+
+            self.gguf_writer.add_array("num_query_heads", self.find_hparam(["num_query_heads"]))
+            self.gguf_writer.add_array("num_kv_heads", self.find_hparam(["num_kv_heads"]))
+            self.gguf_writer.add_array("qkv_multipliers", self.find_hparam(["num_kv_heads"]))
+
 
             self.gguf_writer.add_tensor(new_name, data)
 

@@ -134,7 +134,6 @@ class TensorNameMap:
             "model.layers.layers.{bid}.self_attn.q_proj",                # plamo
             "model.layers.{bid}.attention.wq",                           # internlm2
             "transformer.decoder_layer.{bid}.multi_head_attention.query",# Grok
-            "transformer.layers.{bid}.attn.q_norm.weight"                # openelm
         ),
 
         # Attention key
@@ -158,7 +157,6 @@ class TensorNameMap:
             "model.layers.layers.{bid}.self_attn.v_proj",                # plamo
             "model.layers.{bid}.attention.wv",                           # internlm2
             "transformer.decoder_layer.{bid}.multi_head_attention.value",# Grok
-            "transformer.layers.33.attn.qkv_proj.weight"                 # openelm
 
         ),
 
@@ -191,7 +189,6 @@ class TensorNameMap:
             "encoder.layers.{bid}.norm1",                      # nomic-bert
             "transformer.decoder_layer.{bid}.rms_norm_1",      # Grok
             "transformer.blocks.{bid}.norm_attn_norm.norm_2",  # dbrx
-            "transformer.norm.weight"                          # openelm
         ),
 
         # Rotary embeddings
@@ -339,7 +336,7 @@ class TensorNameMap:
             "model.layers.{bid}.self_attn.k_layernorm",                       # persimmon
             "model.layers.{bid}.self_attn.k_norm",                            # cohere
             "transformer.blocks.{bid}.attn.k_ln",                             # sea-lion
-            "transformer.layers.{bid}.attn.k_norm.weight"                     # openelm
+            "transformer.layers.{bid}.attn.k_norm.weight"
         ),
 
         MODEL_TENSOR.ROPE_FREQS: (
