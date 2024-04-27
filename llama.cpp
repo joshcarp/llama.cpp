@@ -10671,13 +10671,25 @@ struct llm_build_context {
 
             // feed-forward network
             cur = llm_build_norm(ctx0, ffn_inp, hparams,
-                    NULL, NULL,
-                    LLM_NORM, cb, il);
+                    model.layers[il].ffn_norm, NULL,
+                    LLM_NORM_RMS, cb, il);
             cb(cur, "ffn_norm", il);
 
+
+            // struct ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+            // cb(ffn_inp, "ffn_inp", il);
+
+            // // feed-forward network
+            // if (model.layers[il].ffn_gate_inp == nullptr) {
+            //     cur = llm_build_norm(ctx0, ffn_inp, hparams,
+            //             model.layers[il].ffn_norm, NULL,
+            //             LLM_NORM_RMS, cb, il);
+            //     cb(cur, "ffn_norm", il);
+
+
             cur = llm_build_ffn(ctx0, cur,
-                    model.layers[il].ffn_norm, NULL,
-                    model.layers[il].ffn_up,   NULL,
+                    model.layers[il].ffn_up, NULL,
+                    NULL, NULL,
                     model.layers[il].ffn_down, NULL,
                     NULL,
                     LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
