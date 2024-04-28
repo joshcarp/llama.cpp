@@ -104,10 +104,7 @@ class Model(ABC):
             self.gguf_writer.add_feed_forward_length(n_ff)
             print(f"gguf: feed forward length = {n_ff}")
 
-        if (head_dim := self.find_hparam(["head_dim"], optional=True)) is not None:
-            n_head = n_embd // head_dim
-        else:
-            n_head = self.find_hparam(["num_attention_heads", "n_head"])
+        n_head = self.find_hparam(["num_attention_heads", "n_head"])
         self.gguf_writer.add_head_count(n_head)
         print(f"gguf: head count = {n_head}")
 
@@ -793,7 +790,7 @@ class BaichuanModel(Model):
         )
 
     def _reverse_hf_permute_part(
-        self, weights: Tensor, n_part: int, n_head: int, n_head_kv: int | None = None,
+            self, weights: Tensor, n_part: int, n_head: int, n_head_kv: int | None = None,
     ) -> Tensor:
         r = weights.shape[0] // 3
         return self._reverse_hf_permute(weights[r * n_part:r * n_part + r, ...], n_head, n_head_kv)
@@ -2490,8 +2487,8 @@ class BertModel(Model):
             new_dtype: type[np.floating[Any]]
 
             if (
-                self.ftype == 1 and name.endswith(".weight") and n_dims == 2
-                and name != "embeddings.token_type_embeddings.weight"  # not used with get_rows, must be F32
+                    self.ftype == 1 and name.endswith(".weight") and n_dims == 2
+                    and name != "embeddings.token_type_embeddings.weight"  # not used with get_rows, must be F32
             ):
                 # if f16 desired, convert any float32 2-dim weight tensors to float16
                 new_dtype = np.float16
@@ -2822,14 +2819,123 @@ class OlmoModel(Model):
 class OpenELM(Model):
     model_arch = gguf.MODEL_ARCH.OPENELM
 
+    # def set_gguf_parameters(self):
+    #     hidden_dim = self.hparams["n_embd"]
+    #     inner_dim = 4 * hidden_dim
+    #     hidden_dim = int(2 * inner_dim / 3)
+    #     multiple_of = 256
+    #     ff_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+    #
+    #     block_count = self.hparams["num_transformer_layers"]
+    #
+    #     self.gguf_writer.add_name("Refact")
+    #     # refact uses Alibi. So this is from config.json which might be used by training.
+    #     self.gguf_writer.add_context_length(self.hparams["n_positions"])
+    #     self.gguf_writer.add_embedding_length(self.hparams["n_embd"])
+    #
+    #     self.gguf_writer.add_feed_forward_length(ff_dim)
+    #     self.gguf_writer.add_block_count(block_count)
+    #     self.gguf_writer.add_head_count(self.hparams["n_head"])
+    #     self.gguf_writer.add_head_count_kv(1)
+    #     self.gguf_writer.add_layer_norm_rms_eps(self.hparams["layer_norm_epsilon"])
+    #     self.gguf_writer.add_file_type(self.ftype)
     def set_gguf_parameters(self):
-        super().set_gguf_parameters()
+        # super().set_gguf_parameters()
         self.gguf_writer.add_layer_norm_eps(1e-5)
-        if "clip_qkv" in self.hparams is not None:
-            self.gguf_writer.add_clamp_kqv(self.hparams["clip_qkv"])
+        self.gguf_writer.add_layer_norm_rms_eps(1e-6) # https://github.com/apple/corenet/blob/0333b1fbb29c31809663c4e6de2654b9ff2d27de/mlx_examples/open_elm/open_elm.py#L20
+        self.block_count = self.find_hparam(["num_transformer_layers"])
+        n_embd = self.find_hparam(["model_dim"])
+        self.gguf_writer.add_embedding_length(n_embd)
+        head_dim = self.find_hparam(["head_dim"])
+        n_head = n_embd // head_dim
+        rot_pct = 1.0
+        self.gguf_writer.add_name("OpenElm")
+        self.gguf_writer.add_float32("a_min", 0.5)
+        self.gguf_writer.add_float32("a_max", 1)
+        self.gguf_writer.add_float32("b_min", 0.5)
+        self.gguf_writer.add_float32("b_max", 4.0)
+        self.gguf_writer.add_context_length(self.find_hparam(["max_context_length"]))
+        self.gguf_writer.add_embedding_length(n_embd)
+        self.gguf_writer.add_feed_forward_length(8192) #TODO:
+        self.gguf_writer.add_block_count(self.block_count)
+        self.gguf_writer.add_head_count(n_head)
+        self.gguf_writer.add_head_count_kv(n_head)
+        self.gguf_writer.add_rope_dimension_count(int(rot_pct * n_embd) // n_head)
+        self.gguf_writer.add_file_type(self.ftype)
+        # self.gguf_writer.add_array("num_query_heads", self.find_hparam(["num_query_heads"]))
+        # self.gguf_writer.add_array("num_kv_heads", self.find_hparam(["num_kv_heads"]))
+        # self.gguf_writer.add_array("qkv_multipliers", self.find_hparam(["num_kv_heads"]))
+        # self.gguf_writer.add_tensor(new_name, data)
+        # self.gguf_writer.add_embedding_length(hparams["hidden_size"])
+        # self.gguf_writer.add_embedding_length(1e-5)
+        #transformer.token_embeddings.weight
+        # if self.ftype == 1 and data_dtype == np.float32 and name.endswith(".weight") and n_dims == 2:
+        #     data = data.astype(np.float16)
+        # self.gguf_writer.add_tensor("output.weight", data)
+
+
 
     def set_vocab(self):
-        self._set_vocab_llama_hf()
+        from sentencepiece import SentencePieceProcessor
+
+        tokenizer_path = self.dir_model / 'tokenizer.model'
+
+        if not tokenizer_path.is_file():
+            print(f'Error: Missing {tokenizer_path}', file=sys.stderr)
+            sys.exit(1)
+
+        tokenizer = SentencePieceProcessor(str(tokenizer_path))
+
+        vocab_size = self.hparams.get('vocab_size', tokenizer.vocab_size())
+
+        tokens: list[bytes] = [f"[PAD{i}]".encode("utf-8") for i in range(vocab_size)]
+        scores: list[float] = [-10000.0] * vocab_size
+        toktypes: list[int] = [SentencePieceTokenTypes.UNKNOWN] * vocab_size
+
+        for token_id in range(tokenizer.vocab_size()):
+
+            piece = tokenizer.id_to_piece(token_id)
+            text = piece.encode("utf-8")
+            score = tokenizer.get_score(token_id)
+
+            toktype = SentencePieceTokenTypes.NORMAL
+            if tokenizer.is_unknown(token_id):
+                toktype = SentencePieceTokenTypes.UNKNOWN
+            elif tokenizer.is_control(token_id):
+                toktype = SentencePieceTokenTypes.CONTROL
+            elif tokenizer.is_unused(token_id):
+                toktype = SentencePieceTokenTypes.UNUSED
+            elif tokenizer.is_byte(token_id):
+                toktype = SentencePieceTokenTypes.BYTE
+
+            tokens[token_id] = text
+            scores[token_id] = score
+            toktypes[token_id] = toktype
+
+        added_tokens_file = self.dir_model / 'added_tokens.json'
+        if added_tokens_file.is_file():
+            with open(added_tokens_file, "r", encoding="utf-8") as f:
+                added_tokens_json = json.load(f)
+
+                for key in added_tokens_json:
+                    token_id = added_tokens_json[key]
+                    if (token_id >= vocab_size):
+                        print(f'ignore token {token_id}: id is out of range, max={vocab_size - 1}')
+                        continue
+
+                    tokens[token_id] = key.encode("utf-8")
+                    scores[token_id] = -1000.0
+                    toktypes[token_id] = SentencePieceTokenTypes.USER_DEFINED
+
+
+        self.gguf_writer.add_tokenizer_model("llama")
+        self.gguf_writer.add_token_list(tokens)
+        self.gguf_writer.add_token_scores(scores)
+        self.gguf_writer.add_token_types(toktypes)
+
+        special_vocab = gguf.SpecialVocab(self.dir_model, n_vocab=len(tokens))
+        special_vocab.add_to_gguf(self.gguf_writer)
+
     # Same as super class, but permuting q_proj, k_proj
     # Copied from: LlamaModel
     def write_tensors(self):
@@ -2837,6 +2943,8 @@ class OpenELM(Model):
         tensor_map = gguf.get_tensor_name_map(self.model_arch, block_count)
         n_head = self.hparams.get("model_dim") //  self.hparams.get("head_dim") # num_attention_heads
         n_kv_head = self.hparams.get("num_kv_heads")
+
+        # tok_embd_name = gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.TOKEN_EMBD] + ".weight"
 
         for name, data_torch in self.get_tensors():
             old_dtype = data_torch.dtype
@@ -2847,19 +2955,27 @@ class OpenELM(Model):
 
             data = data_torch.numpy()
 
-            if name.endswith("q_proj.weight"):
-                data = permute(data, n_head, n_head)
-            if name.endswith("k_proj.weight"):
-                data = permute(data, n_head, n_kv_head)
+
+            # if name.endswith("q_proj.weight"):
+            #     data = permute(data, n_head, n_head)
+            # if name.endswith("k_proj.weight"):
+            #     data = permute(data, n_head, n_kv_head)
 
             data = data.squeeze()
-
+            # if name == "word_embeddings.weight":
+            #     self.gguf_writer.add_tensor("output.weight", data)
             # map tensor names
             new_name = tensor_map.get_name(name, try_suffixes=(".weight", ".bias"))
             if new_name is None:
                 print(f"Can not map tensor {name!r}")
                 sys.exit()
-
+            # if "token_embd" in new_name:
+            #     new_name += ".weight"
+            # if "output" == new_name:
+            #     new_name += ".weight"
+            # if "transformer.norm.weight" == name:
+            #     new_name = "output_norm.weight"
+            new_name += ".weight"
             n_dims = len(data.shape)
             data_dtype = data.dtype
 
@@ -2876,6 +2992,13 @@ class OpenELM(Model):
                 data = data.astype(np.float16)
 
             print(f"{new_name}, n_dims = {n_dims}, {old_dtype} --> {data.dtype}")
+            # if name == "word_embeddings.weight":
+            #     new_name = "output.weight"
+
+            self.gguf_writer.add_array("num_query_heads", self.find_hparam(["num_query_heads"]))
+            self.gguf_writer.add_array("num_kv_heads", self.find_hparam(["num_kv_heads"]))
+            self.gguf_writer.add_array("qkv_multipliers", self.find_hparam(["num_kv_heads"]))
+
 
             self.gguf_writer.add_tensor(new_name, data)
 

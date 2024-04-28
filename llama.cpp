@@ -1040,7 +1040,7 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
             {
                 { LLM_TENSOR_TOKEN_EMBD,      "token_embd" },
                 { LLM_TENSOR_OUTPUT_NORM,     "output_norm" },
-                { LLM_TENSOR_ATTN_OUT,          "attn_output.weight" },
+                { LLM_TENSOR_ATTN_OUT,          "blk.%d.attn_output" },
                 { LLM_TENSOR_ATTN_K_NORM,       "blk.%d.attn_k_norm" },
                 { LLM_TENSOR_ATTN_Q_NORM,        "blk.%d.attn_qkv" },
                 { LLM_TENSOR_ATTN_QKV,          "blk.%d.attn_qkv" },
@@ -5878,17 +5878,6 @@ static bool llm_load_tensors(
             case LLM_ARCH_OPENELM:
             {
                 model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, false);
-
-                // std::vector<float> ffn_multipliers;
-                // ml.get_key(LLM_FFN_MULTIPLIERS, ffn_multipliers);
-
-                // std::vector<float> num_kv_heads;
-                // ml.get_key(LLM_FFN_MULTIPLIERS, ffn_multipliers);
-                //
-                // LLM_FFN_MULTIPLIERS,
-                // LLM_NUM_KV_HEADS,
-                // LLM_NUM_QUERY_HEADS,
-                // output
                 {
                     model.output_norm = ml.create_tensor(ctx_output, tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }, false); // todo: remove false
                     // model.output = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab });
@@ -5896,14 +5885,13 @@ static bool llm_load_tensors(
                     ml.n_created--; // artificial tensor
                     ml.size_data += ggml_nbytes(model.output);
                 }
-
                 for (int i = 0; i < n_layer; ++i) {
                     ggml_context* ctx_layer = ctx_for_layer(i);
                     ggml_context* ctx_split = ctx_for_layer_split(i);
                     auto& layer = model.layers[i];
                     layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), { n_embd }, false);
                     layer.wqkv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_QKV, "weight", i), { n_embd, n_embd + 2 * n_embd_gqa }, false);
-                    layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), { n_embd, n_embd }, false);
+                    layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), { n_embd, n_embd }, true);
                     layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), { n_embd }, false);
                     layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd }, false);
                     layer.ffn_up = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP, "weight", i), { n_embd, 2 * n_ff }, false);
@@ -6541,7 +6529,7 @@ static struct ggml_tensor * llm_build_kqv(
 
     ggml_build_forward_expand(graph, cur);
 
-    cur = ggml_mul_mat(ctx, wo, cur);
+    // cur = ggml_mul_mat(ctx, wo, cur);
     if (wo_b) {
         cb(cur, "kqv_wo", il);
     }
@@ -9201,9 +9189,9 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                cur = llm_build_kv(ctx0, model, hparams, kv_self, gf,
-                    model.layers[il].wo, NULL,
-                    Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, kv_head, n_kv, 1.0f, cb, il);
+                // cur = llm_build_kv(ctx0, model, hparams, kv_self, gf,
+                //     cur, NULL,
+                //     Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, kv_head, n_kv, 1.0f, cb, il);
             }
 
             if (il == n_layer - 1) {
@@ -10664,19 +10652,12 @@ struct llm_build_context {
                 struct ggml_tensor * Kcur = nullptr;
                 struct ggml_tensor * Vcur = nullptr;
 
-                if (model.layers[il].wqkv) {
-                    cur = ggml_mul_mat(ctx0, model.layers[il].wqkv, attn_norm_output);
-                    cb(cur, "wqkv", il);
+                cur = ggml_mul_mat(ctx0, model.layers[il].wqkv, attn_norm_output);
+                cb(cur, "wqkv", il);
 
-                    Qcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd,     n_tokens, cur->nb[1], 0 * sizeof(float) * (n_embd)));
-                    Kcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd)));
-                    Vcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd + n_embd_gqa)));
-                }
-                else {
-                    Qcur = ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].wq, attn_norm_output), model.layers[il].bq);
-                    Kcur = ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].wk, attn_norm_output), model.layers[il].bk);
-                    Vcur = ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].wv, attn_norm_output), model.layers[il].bv);
-                }
+                Qcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd,     n_tokens, cur->nb[1], 0 * sizeof(float) * (n_embd)));
+                Kcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd)));
+                Vcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd + n_embd_gqa)));
 
                 cb(Qcur, "Qcur", il);
                 cb(Kcur, "Kcur", il);
