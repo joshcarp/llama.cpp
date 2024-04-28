@@ -6554,7 +6554,7 @@ static struct ggml_tensor * llm_build_kqv(
 
     ggml_build_forward_expand(graph, cur);
 
-    // cur = ggml_mul_mat(ctx, wo, cur); // TODO: OpenElm doesn't seem to do this multiplication in their implemenation, but I don't under stand how not.
+    cur = ggml_mul_mat(ctx, wo, cur); // TODO: OpenElm doesn't seem to do this multiplication in their implemenation, but I don't under stand how not.
     if (wo_b) {
         cb(cur, "kqv_wo", il);
     }
@@ -9204,7 +9204,7 @@ struct llm_build_context {
                 cb(Kcur, "Kcur", il);
 
                 cur = llm_build_kv(ctx0, model, hparams, kv_self, gf,
-                    model.layers[il].wo, NULL,
+                    model.layers[il].ffn_up, NULL,
                     Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, kv_head, n_kv, 1.0f, cb, il);
             }
 
@@ -10662,9 +10662,8 @@ struct llm_build_context {
                     freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow
                 );
                 cb(Kcur, "Kcur", il);
-
                 cur = llm_build_kv(ctx0, model, modified_hparams, kv_self, gf,
-                    model.layers[il].wo, NULL,
+                     model.layers[il].wo, NULL,
                     Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, kv_head, n_kv, 1.0f, cb, il);
             }
 

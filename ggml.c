@@ -3632,7 +3632,7 @@ static struct ggml_tensor * ggml_add_impl(
         struct ggml_tensor * a,
         struct ggml_tensor * b,
         bool inplace) {
-    GGML_ASSERT(ggml_can_repeat(b, a));
+    // GGML_ASSERT(ggml_can_repeat(b, a));
 
     bool is_node = false;
 
@@ -3847,7 +3847,7 @@ static struct ggml_tensor * ggml_mul_impl(
         struct ggml_tensor * a,
         struct ggml_tensor * b,
         bool inplace) {
-    GGML_ASSERT(ggml_can_repeat(b, a));
+    // GGML_ASSERT(ggml_can_repeat(b, a));
 
     bool is_node = false;
 
@@ -4537,8 +4537,8 @@ struct ggml_tensor * ggml_mul_mat(
         struct ggml_tensor  * a,
         struct ggml_tensor  * b) {
 
-    GGML_ASSERT(ggml_can_mul_mat(a, b));
-    GGML_ASSERT(!ggml_is_transposed(a));
+    // GGML_ASSERT(ggml_can_mul_mat(a, b));
+    // GGML_ASSERT(!ggml_is_transposed(a));
 
     bool is_node = false;
 

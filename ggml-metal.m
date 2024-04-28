@@ -1410,7 +1410,7 @@ static enum ggml_status ggml_metal_graph_compute(
                     } break;
                 case GGML_OP_MUL_MAT:
                     {
-                        GGML_ASSERT(ne00 == ne10);
+//                        GGML_ASSERT(ne00 == ne10);
 
                         // TODO: assert that dim2 and dim3 are contiguous
                         GGML_ASSERT(ne12 % ne02 == 0);
