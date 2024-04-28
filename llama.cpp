@@ -381,9 +381,6 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
     { LLM_KV_ATTENTION_LAYERNORM_EPS,       "%s.attention.layer_norm_epsilon"     },
     { LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,   "%s.attention.layer_norm_rms_epsilon" },
     { LLM_KV_ATTENTION_CAUSAL,              "%s.attention.causal"                 },
-    // { LLM_FFN_MULTIPLIERS,                  "%s.ffn_multipliers"                  },
-    // { LLM_NUM_KV_HEADS,                       "%s.num_kv_heads"                     },
-    // { LLM_NUM_QUERY_HEADS,                    "%s.num_query_heads"                  },
 
     { LLM_KV_ROPE_DIMENSION_COUNT,          "%s.rope.dimension_count"                 },
     { LLM_KV_ROPE_FREQ_BASE,                "%s.rope.freq_base"                       },
@@ -1872,10 +1869,6 @@ struct llama_hparams {
 
     bool causal_attn = true;
     bool need_kq_pos = false;
-
-    // std::vector<int, int> ffn_size;
-    // std::vector<int, int> qkv_size;
-    // std::vector<int, int> num_query_heads;
 
     enum llama_pooling_type      pooling_type            = LLAMA_POOLING_TYPE_NONE;
     enum llama_rope_type         rope_type               = LLAMA_ROPE_TYPE_NONE;
@@ -3398,7 +3391,7 @@ struct llama_model_loader {
                     break;
                 }
             }
-            if (false and (!is_ok) ){
+            if (false and (!is_ok) ){ // TODO: Fix this for OpenElm
                 throw std::runtime_error(
                         format("%s: tensor '%s' has wrong shape; expected %s, got %s",
                             __func__, name.c_str(),
@@ -3449,7 +3442,7 @@ struct llama_model_loader {
     }
 
     void done_getting_tensors() const {
-        if (false){//if (n_created != n_tensors) {
+        if (false){//if (n_created != n_tensors) { // TODO: Fix this for OpenElm
             throw std::runtime_error(format("%s: wrong number of tensors; expected %d, got %d", __func__, n_tensors, n_created));
         }
     }
@@ -4210,15 +4203,7 @@ static void llm_load_hparams(
             } break;
         case LLM_ARCH_OPENELM:
         {
-
-
-
-
             ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
-            // ml.get_key(LLM_FFN_MULTIPLIERS,    hparams.f_norm_eps);
-            // ml.get_key(LLM_NUM_KV_HEADS,           hparams.causal_attn);
-            // ml.get_key(LLM_NUM_QUERY_HEADS, hparams.n_vocab_type);
-
             switch (hparams.n_layer) {
                 case 16: model.type = e_model::MODEL_270M; break;
                 case 20: model.type = e_model::MODEL_450M; break;
@@ -5921,7 +5906,6 @@ static bool llm_load_tensors(
                 model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, false);
                 {
                     model.output_norm = ml.create_tensor(ctx_output, tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }, false); // todo: remove false
-                    // model.output = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab });
                     model.output = ml.create_tensor(ctx_output, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
                     ml.n_created--; // artificial tensor
                     ml.size_data += ggml_nbytes(model.output);
@@ -6501,7 +6485,7 @@ static struct ggml_tensor * llm_build_kqv(
                 ggml_row_size(kv.k_l[il]->type, n_embd_head_k),
                 0);
     cb(k, "k", il);
-    // not working here
+
     struct ggml_tensor * kq = ggml_mul_mat(ctx, k, q);
     cb(kq, "kq", il);
 
@@ -6570,7 +6554,7 @@ static struct ggml_tensor * llm_build_kqv(
 
     ggml_build_forward_expand(graph, cur);
 
-    // cur = ggml_mul_mat(ctx, wo, cur);
+    // cur = ggml_mul_mat(ctx, wo, cur); // TODO: OpenElm doesn't seem to do this multiplication in their implemenation, but I don't under stand how not.
     if (wo_b) {
         cb(cur, "kqv_wo", il);
     }
@@ -6853,17 +6837,6 @@ struct llm_build_context {
     }
 
     struct ggml_tensor * build_inp_KQ_mask(bool causal = true) {
-        if (causal) {
-            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, n_tokens);
-        } else {
-            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_tokens, n_tokens);
-        }
-        cb(lctx.inp_KQ_mask, "KQ_mask", -1);
-        ggml_set_input(lctx.inp_KQ_mask);
-        return lctx.inp_KQ_mask;
-    }
-
-    struct ggml_tensor * build_inp_KQ_mask2(int64_t n_kv, bool causal = true) {
         if (causal) {
             lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, n_tokens);
         } else {
@@ -9230,9 +9203,9 @@ struct llm_build_context {
                 );
                 cb(Kcur, "Kcur", il);
 
-                // cur = llm_build_kv(ctx0, model, hparams, kv_self, gf,
-                //     cur, NULL,
-                //     Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, kv_head, n_kv, 1.0f, cb, il);
+                cur = llm_build_kv(ctx0, model, hparams, kv_self, gf,
+                    model.layers[il].wo, NULL,
+                    Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, kv_head, n_kv, 1.0f, cb, il);
             }
 
             if (il == n_layer - 1) {

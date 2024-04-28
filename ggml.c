@@ -2924,7 +2924,7 @@ static struct ggml_tensor * ggml_new_tensor_impl(
     for (int i = 1; i < n_dims; i++) {
         data_size *= ne[i];
     }
-    // todo:
+
     // GGML_ASSERT(view_src == NULL || data_size == 0 || data_size + view_offs <= ggml_nbytes(view_src));
 
     void * data = view_src != NULL ? view_src->data : NULL;
@@ -4536,18 +4536,7 @@ struct ggml_tensor * ggml_mul_mat(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b) {
-    // printf("Values of a->nb: \n");
-    // for (int i = 0; i < 4; ++i) {
-    //     printf("a->nb[%d] %d \n",i,  a->ne[i]);
-    // }
-    // printf("\n");
-    //
-    // printf("Values of b->nb: \n");
-    // for (int i = 0; i < 4; ++i) {
-    //     printf("b->nb[%d] %d \n",i,  b->ne[i]);
-    // }
-    // printf("\n");
-    
+
     GGML_ASSERT(ggml_can_mul_mat(a, b));
     GGML_ASSERT(!ggml_is_transposed(a));
 
