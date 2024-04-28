@@ -5892,21 +5892,19 @@ static bool llm_load_tensors(
                 {
                     model.output_norm = ml.create_tensor(ctx_output, tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }, false); // todo: remove false
                     // model.output = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab });
+                    model.output = ml.create_tensor(ctx_output, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
+                    ml.n_created--; // artificial tensor
+                    ml.size_data += ggml_nbytes(model.output);
                 }
 
                 for (int i = 0; i < n_layer; ++i) {
                     ggml_context* ctx_layer = ctx_for_layer(i);
                     ggml_context* ctx_split = ctx_for_layer_split(i);
-
                     auto& layer = model.layers[i];
-                    // hereas
                     layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), { n_embd }, false);
-
                     layer.wqkv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_QKV, "weight", i), { n_embd, n_embd + 2 * n_embd_gqa }, false);
                     layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), { n_embd, n_embd }, false);
-
                     layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), { n_embd }, false);
-
                     layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd }, false);
                     layer.ffn_up = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP, "weight", i), { n_embd, 2 * n_ff }, false);
                 }
@@ -6826,6 +6824,17 @@ struct llm_build_context {
     }
 
     struct ggml_tensor * build_inp_KQ_mask(bool causal = true) {
+        if (causal) {
+            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, n_tokens);
+        } else {
+            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_tokens, n_tokens);
+        }
+        cb(lctx.inp_KQ_mask, "KQ_mask", -1);
+        ggml_set_input(lctx.inp_KQ_mask);
+        return lctx.inp_KQ_mask;
+    }
+
+    struct ggml_tensor * build_inp_KQ_mask2(int64_t n_kv, bool causal = true) {
         if (causal) {
             lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, n_tokens);
         } else {
@@ -10615,17 +10624,41 @@ struct llm_build_context {
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
-        struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
         for (int il = 0; il < n_layer; ++il) {
             struct ggml_tensor * inpSA = inpL;
-            const int n_embd_head = n_embd / num_query_heads[il];
-            const int n_embd_gqa = hparams.n_embd_v_gqa(); // Assuming equal key and value heads
-            const int head_dim = hparams.n_embd_head_v;
-            const int num_q_heads = num_query_heads[il];
-            const int num_k_heads = num_kv_heads[il];
-            const int num_v_heads = num_kv_heads[il];
+            int n_embd_head = 64;
+            int head_dim = hparams.n_embd_head_v;
+            int num_q_heads = num_query_heads[il];
+            int num_k_heads = num_kv_heads[il];
+            int num_v_heads = num_kv_heads[il];
+            int intdims = num_query_heads[il] +num_kv_heads[il] +num_kv_heads[il];
+            llama_hparams modified_hparams(hparams);
+            modified_hparams.n_embd_head_v = num_v_heads * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
+            modified_hparams.n_embd_head_k = num_k_heads * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
+            modified_hparams.n_head_kv = num_k_heads;
+            const int64_t n_embd_gqa = modified_hparams.n_embd_v_gqa();
+
+            struct ggml_tensor* attn_norm_output = llm_build_norm(ctx0, inpL, modified_hparams,
+                    model.layers[il].attn_norm,
+                    NULL,
+                    LLM_NORM_RMS, cb, il);
+            cb(attn_norm_output, "attn_norm", il);
+
+            struct ggml_tensor * Qcur = nullptr;
+            struct ggml_tensor * Kcur = nullptr;
+            struct ggml_tensor * Vcur = nullptr;
+
+            cur = ggml_mul_mat(ctx0, model.layers[il].wqkv, attn_norm_output);
+
+
+
+            struct ggml_tensor * KQ_mask = build_inp_KQ_mask2(64, false);
+
+            // llama_hparams *hparams2 = hparams;
+            // hparams->n_embd_head_k = (uint32_t)num_k_heads;
+            // hparams.n_embd_head_v = (uint32_t)num_v_heads;
             // norm
-            cur = llm_build_norm(ctx0, inpL, hparams,
+            cur = llm_build_norm(ctx0, inpL, modified_hparams,
                     NULL, NULL,
                     LLM_NORM_RMS, cb, il);
             cb(cur, "attn_norm", il);
@@ -10640,22 +10673,23 @@ struct llm_build_context {
                 struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, model.layers[il].wqkv, cur);
                 cb(Vcur, "Vcur", il);
                 Qcur = ggml_rope_custom(
-                    ctx0, ggml_reshape_3d(ctx0, Qcur, n_embd_head, num_k_heads, n_tokens), inp_pos,
+                    ctx0, ggml_reshape_3d(ctx0, Qcur, n_embd_head, num_q_heads, n_tokens), inp_pos,
                     n_rot, rope_type, 0, n_orig_ctx, freq_base, freq_scale,
                     ext_factor, attn_factor, beta_fast, beta_slow
                 );
                 cb(Qcur, "Qcur", il);
 
                 Kcur = ggml_rope_custom(
-                    ctx0, ggml_reshape_3d(ctx0, Kcur, n_embd_head, num_k_heads, n_tokens), inp_pos,
+                    ctx0, ggml_reshape_3d(ctx0, Kcur, n_embd_head, intdims, n_tokens), inp_pos,
                     n_rot, rope_type, 0, n_orig_ctx, freq_base, freq_scale,
                     ext_factor, attn_factor, beta_fast, beta_slow
                 );
                 cb(Kcur, "Kcur", il);
 
-                // cur = llm_build_kv(ctx0, model, hparams, kv_self, gf,
-                //         model.layers[il].wo, nullptr,
-                //         Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, num_k_heads, num_v_heads, 1.0f/sqrtf(float(n_embd_head)), cb, il);
+
+                cur = llm_build_kv(ctx0, model, modified_hparams, kv_self, gf,
+                        model.layers[il].wo, nullptr,
+                        Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, num_k_heads, num_v_heads, 1.0f/sqrtf(float(n_embd_head)), cb, il);
             }
 
             if (il == n_layer - 1) {
@@ -10686,23 +10720,40 @@ struct llm_build_context {
             //             LLM_NORM_RMS, cb, il);
             //     cb(cur, "ffn_norm", il);
 
+            {
+                struct ggml_tensor* up = ggml_mul_mat(ctx0, model.layers[il].ffn_up, cur);
+                cb(up, "ffn_up", il);
 
-            cur = llm_build_ffn(ctx0, cur,
-                    model.layers[il].ffn_up, NULL,
-                    NULL, NULL,
-                    model.layers[il].ffn_down, NULL,
-                    NULL,
-                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
-            cb(cur, "ffn_out", il);
+                auto g = ggml_cont(ctx0, ggml_view_2d(ctx0, up, up->ne[0] / 2, up->ne[1], ggml_row_size(up->type, up->ne[0]), 0));
+                auto y = ggml_cont(ctx0, ggml_view_2d(ctx0, up, up->ne[0] / 2, up->ne[1], ggml_row_size(up->type, up->ne[0]), up->nb[1] / 2));
 
-            cur = ggml_add(ctx0, cur, ffn_inp);
-            cb(cur, "ffn_out", il);
+                y = ggml_mul(ctx0, y, ggml_silu(ctx0, g));
+                cb(y, "ffn_gate", il);
 
-            ggml_tensor * layer_dir = lctx.cvec.tensor_for(il);
-            if (layer_dir != nullptr) {
-                cur = ggml_add(ctx0, cur, layer_dir);
+                auto down = ggml_mul_mat(ctx0, model.layers[il].ffn_down, y);
+                cb(down, "ffn_down", il);
+
+                cur = down;
+                cb(cur, "ffn_out", il);
             }
-            cb(cur, "l_out", il);
+
+            //
+            // cur = llm_build_ffn(ctx0, cur,
+            //         model.layers[il].ffn_up, NULL,
+            //         NULL, NULL,
+            //         model.layers[il].ffn_down, NULL,
+            //         NULL,
+            //         LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
+            // cb(cur, "ffn_out", il);
+            //
+            // cur = ggml_add(ctx0, cur, ffn_inp);
+            // cb(cur, "ffn_out", il);
+            //
+            // ggml_tensor * layer_dir = lctx.cvec.tensor_for(il);
+            // if (layer_dir != nullptr) {
+            //     cur = ggml_add(ctx0, cur, layer_dir);
+            // }
+            // cb(cur, "l_out", il);
 
             // input for next layer
             inpL = cur;
@@ -10715,12 +10766,20 @@ struct llm_build_context {
                 LLM_NORM, cb, -1);
         cb(cur, "result_norm", -1);
 
+        // cur = llm_build_norm(ctx0, inpL, hparams,
+        //         model.output_norm,
+        //         model.output_norm_b,
+        //         LLM_NORM, cb, -1);
+        // cb(cur, "result_norm", -1);
+        //
+        // cur = ggml_mul_mat(ctx0, model.output, cur);
+        // cb(cur, "result_output", -1);
+
         // lm_head
-        cur = ggml_mul_mat(ctx0, model.output, cur);
+        cur = ggml_mul_mat(ctx0, model.output_norm, cur);
         cb(cur, "result_output", -1);
 
         ggml_build_forward_expand(gf, cur);
-
         return gf;
     };
 };
