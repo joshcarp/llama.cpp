@@ -10637,7 +10637,7 @@ struct llm_build_context {
         for (int il = 0; il < n_layer; ++il) {
             auto residual = inpL;
             // TODO: Want the offsets to be calculated with the num heads at layer level
-            // This doesn't work at the moment
+            // This doesn't work at the moment, comment out to test
             const int64_t n_head_k = num_kv_heads[il];
             const int64_t n_head_v = num_kv_heads[il];
             const int64_t n_head_kv = num_kv_heads[il]+num_kv_heads[il];
@@ -10648,11 +10648,6 @@ struct llm_build_context {
             const int64_t n_embd_gqa =  n_embd_head * n_head;//n_embd_head * n_head;
             const int64_t n_embd_k_gqa =  modified_hparams.n_embd_k_gqa();//n_embd_head_k * n_head_k;
             const int64_t n_embd_v_gqa =  modified_hparams.n_embd_v_gqa();//n_embd_head_v * n_head_v;
-
-            // n_embd_head_v
-            // n_embd_k_gqa
-
-            // const int64_t n_tokens =  n_embd_gqa;
 
             // self-attention
             {
@@ -10680,7 +10675,6 @@ struct llm_build_context {
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head,  n_head,    n_tokens);
                 Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head,  n_head_kv, n_tokens);
                 struct ggml_tensor * KQ_mask = build_inp_KQ_mask2(n_kv);
-
 
                 Qcur = ggml_rope_custom(
                     ctx0, Qcur, inp_pos, n_rot, rope_type, 0, n_orig_ctx,
