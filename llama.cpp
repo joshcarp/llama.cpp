@@ -6554,7 +6554,7 @@ static struct ggml_tensor * llm_build_kqv(
 
     ggml_build_forward_expand(graph, cur);
 
-    cur = ggml_mul_mat(ctx, wo, cur); // TODO: OpenElm doesn't seem to do this multiplication in their implemenation, but I don't under stand how not.
+    cur = ggml_mul_mat(ctx, wo, cur);
     if (wo_b) {
         cb(cur, "kqv_wo", il);
     }
@@ -6837,6 +6837,17 @@ struct llm_build_context {
     }
 
     struct ggml_tensor * build_inp_KQ_mask(bool causal = true) {
+        if (causal) {
+            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, n_tokens);
+        } else {
+            lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_tokens, n_tokens);
+        }
+        cb(lctx.inp_KQ_mask, "KQ_mask", -1);
+        ggml_set_input(lctx.inp_KQ_mask);
+        return lctx.inp_KQ_mask;
+    }
+
+    struct ggml_tensor * build_inp_KQ_mask2(int64_t n_kv, bool causal = true) {
         if (causal) {
             lctx.inp_KQ_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, n_tokens);
         } else {
@@ -10612,13 +10623,13 @@ struct llm_build_context {
     struct ggml_cgraph * build_openelm() {
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
         const int64_t n_embd_head = hparams.n_embd_head_v;
+        // TODO: get this from config
         std::vector<int> num_kv_heads = {3,     3,     3,     3,     3,     4,     4,     4,     4,     4,     4,     4,     5,     5,     5,     5};
         std::vector<int> num_query_heads = {12, 12, 12, 12, 12, 16, 16, 16, 16, 16, 16, 16, 20, 20, 20, 20};
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
         inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
         struct ggml_tensor * inp_pos = build_inp_pos();
-        struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
         // const int64_t n_embd_gqa =  n_embd_head_v * (num_kv_heads[il]+num_kv_heads[il]+num_query_heads[il]);
         llama_hparams modified_hparams(hparams);
 
@@ -10627,9 +10638,22 @@ struct llm_build_context {
             auto residual = inpL;
             // TODO: Want the offsets to be calculated with the num heads at layer level
             // This doesn't work at the moment
-            // const int64_t n_head_kv =  num_kv_heads[il]+num_kv_heads[il]+num_query_heads[il];
-            // modified_hparams.n_head_kv = n_head_kv;
-            const int64_t n_embd_gqa =  n_embd_head_v * n_head_kv;
+            const int64_t n_head_k = num_kv_heads[il];
+            const int64_t n_head_v = num_kv_heads[il];
+            const int64_t n_head_kv = num_kv_heads[il]+num_kv_heads[il];
+            const int64_t n_head =  n_head_kv+ num_query_heads[il];
+            const int64_t n_kv =  (num_kv_heads[il]+num_kv_heads[il])*n_embd_head;
+            modified_hparams.n_head = n_head;
+            modified_hparams.n_head_kv = n_head_kv;
+            const int64_t n_embd_gqa =  n_embd_head * n_head;//n_embd_head * n_head;
+            const int64_t n_embd_k_gqa =  modified_hparams.n_embd_k_gqa();//n_embd_head_k * n_head_k;
+            const int64_t n_embd_v_gqa =  modified_hparams.n_embd_v_gqa();//n_embd_head_v * n_head_v;
+
+            // n_embd_head_v
+            // n_embd_k_gqa
+
+            // const int64_t n_tokens =  n_embd_gqa;
+
             // self-attention
             {
                 struct ggml_tensor* attn_norm_output = llm_build_norm(ctx0, inpL, modified_hparams,
@@ -10646,15 +10670,17 @@ struct llm_build_context {
                 cb(cur, "wqkv", il);
 
                 Qcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd,     n_tokens, cur->nb[1], 0 * sizeof(float) * (n_embd)));
-                Kcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd)));
-                Vcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd + n_embd_gqa)));
+                Kcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_k_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd)));
+                Vcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_v_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd + n_embd_k_gqa)));
 
                 cb(Qcur, "Qcur", il);
                 cb(Kcur, "Kcur", il);
                 cb(Vcur, "Vcur", il);
 
-                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
-                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head,  n_head,    n_tokens);
+                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head,  n_head_kv, n_tokens);
+                struct ggml_tensor * KQ_mask = build_inp_KQ_mask2(n_kv);
+
 
                 Qcur = ggml_rope_custom(
                     ctx0, Qcur, inp_pos, n_rot, rope_type, 0, n_orig_ctx,
