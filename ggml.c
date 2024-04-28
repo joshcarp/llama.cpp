@@ -4536,17 +4536,17 @@ struct ggml_tensor * ggml_mul_mat(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b) {
-    printf("Values of a->nb: \n");
-    for (int i = 0; i < 4; ++i) {
-        printf("a->nb[%d] %d \n",i,  a->ne[i]);
-    }
-    printf("\n");
-
-    printf("Values of b->nb: \n");
-    for (int i = 0; i < 4; ++i) {
-        printf("b->nb[%d] %d \n",i,  b->ne[i]);
-    }
-    printf("\n");
+    // printf("Values of a->nb: \n");
+    // for (int i = 0; i < 4; ++i) {
+    //     printf("a->nb[%d] %d \n",i,  a->ne[i]);
+    // }
+    // printf("\n");
+    //
+    // printf("Values of b->nb: \n");
+    // for (int i = 0; i < 4; ++i) {
+    //     printf("b->nb[%d] %d \n",i,  b->ne[i]);
+    // }
+    // printf("\n");
     
     GGML_ASSERT(ggml_can_mul_mat(a, b));
     GGML_ASSERT(!ggml_is_transposed(a));
