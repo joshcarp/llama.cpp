@@ -10597,56 +10597,18 @@ struct llm_build_context {
 
     struct ggml_cgraph * build_openelm() {
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
-        std::vector<int> num_kv_heads = {3,     3,     3,     3,     3,     4,     4,     4,     4,     4,     4,     4,     5,     5,     5,     5};
-        std::vector<int> num_query_heads = {12, 12, 12, 12, 12, 16, 16, 16, 16, 16, 16, 16, 20, 20, 20, 20};
-        std::vector<float> ffn_multipliers = {0.5,     0.73,     0.97,     1.2,     1.43,     1.67,     1.9,     2.13,     2.37,     2.6,     2.83,     3.07,     3.3,     3.53,     3.77,     4.0};
         const int64_t n_embd_head = hparams.n_embd_head_v;
-
-
-
-        /*
-        *            struct ggml_tensor * inpSA = inpL;
-            int head_dim = hparams.n_embd_head_v;
-            int num_q_heads = num_query_heads[il];
-            int num_k_heads = num_kv_heads[il];
-            int num_v_heads = num_kv_heads[il];
-            int intdims = num_query_heads[il] +num_kv_heads[il] +num_kv_heads[il];
-            llama_hparams modified_hparams(hparams);
-            modified_hparams.n_embd_head_v = num_v_heads;// * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
-            modified_hparams.n_embd_head_k = num_k_heads;// * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
-            // modified_hparams.n_head_kv = num_k_heads;
-            const int64_t n_embd_gqa = modified_hparams.n_embd_v_gqa();
-         *
-         *
-         */
-
+        const int64_t n_embd_gqa = hparams.n_embd_v_gqa();
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
-
         inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
-
-        // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
-
-        // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
         struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
-
-
 
         for (int il = 0; il < n_layer; ++il) {
             auto residual = inpL;
-
-            // int n_embd_head = 64;
             llama_hparams modified_hparams(hparams);
-            // int num_v_heads = num_kv_heads[il];
-            // modified_hparams.n_embd_head_v = num_v_heads;// * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
-            // modified_hparams.n_embd_head_v = 64; //= num_v_heads;// * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
-            // n_embd_head_v * n_head_kv
-            const int64_t n_embd_gqa = modified_hparams.n_embd_v_gqa();
-
             // self-attention
-            // printf("model.layers[il].attn_norm[0]); %d\n", model.layers[il].attn_norm[0]);
-            // printf("model.layers[il].attn_norm[1]); %d\n", model.layers[il].attn_norm[1]);
             {
                 struct ggml_tensor* attn_norm_output = llm_build_norm(ctx0, inpL, modified_hparams,
                     model.layers[il].attn_norm,
