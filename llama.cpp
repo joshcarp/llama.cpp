@@ -10600,13 +10600,7 @@ struct llm_build_context {
         std::vector<int> num_kv_heads = {3,     3,     3,     3,     3,     4,     4,     4,     4,     4,     4,     4,     5,     5,     5,     5};
         std::vector<int> num_query_heads = {12, 12, 12, 12, 12, 16, 16, 16, 16, 16, 16, 16, 20, 20, 20, 20};
         std::vector<float> ffn_multipliers = {0.5,     0.73,     0.97,     1.2,     1.43,     1.67,     1.9,     2.13,     2.37,     2.6,     2.83,     3.07,     3.3,     3.53,     3.77,     4.0};
-        int n_embd_head = 64;
-        llama_hparams modified_hparams(hparams);
-        int num_v_heads = num_kv_heads[0];
-        // modified_hparams.n_embd_head_v = num_v_heads;// * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
-        modified_hparams.n_embd_head_v = 64; //= num_v_heads;// * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
-        // n_embd_head_v * n_head_kv
-        const int64_t n_embd_gqa = modified_hparams.n_embd_v_gqa();
+        const int64_t n_embd_head = hparams.n_embd_head_v;
 
 
 
@@ -10629,7 +10623,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, modified_hparams, batch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -10637,10 +10631,22 @@ struct llm_build_context {
         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
         struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
 
+
+
         for (int il = 0; il < n_layer; ++il) {
             auto residual = inpL;
 
+            // int n_embd_head = 64;
+            llama_hparams modified_hparams(hparams);
+            // int num_v_heads = num_kv_heads[il];
+            // modified_hparams.n_embd_head_v = num_v_heads;// * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
+            // modified_hparams.n_embd_head_v = 64; //= num_v_heads;// * 64 * 2; //  num_v_heads * head_size * 1/qkv_multipliers
+            // n_embd_head_v * n_head_kv
+            const int64_t n_embd_gqa = modified_hparams.n_embd_v_gqa();
+
             // self-attention
+            // printf("model.layers[il].attn_norm[0]); %d\n", model.layers[il].attn_norm[0]);
+            // printf("model.layers[il].attn_norm[1]); %d\n", model.layers[il].attn_norm[1]);
             {
                 struct ggml_tensor* attn_norm_output = llm_build_norm(ctx0, inpL, modified_hparams,
                     model.layers[il].attn_norm,
@@ -10727,7 +10733,7 @@ struct llm_build_context {
             inpL = cur;
         }
 
-        cur = llm_build_norm(ctx0, inpL, modified_hparams,
+        cur = llm_build_norm(ctx0, inpL, hparams,
             model.output_norm,
             NULL,
             LLM_NORM_RMS, cb, -1);
