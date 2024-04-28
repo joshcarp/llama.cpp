@@ -10612,16 +10612,24 @@ struct llm_build_context {
     struct ggml_cgraph * build_openelm() {
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
         const int64_t n_embd_head = hparams.n_embd_head_v;
-        const int64_t n_embd_gqa = hparams.n_embd_v_gqa();
+        std::vector<int> num_kv_heads = {3,     3,     3,     3,     3,     4,     4,     4,     4,     4,     4,     4,     5,     5,     5,     5};
+        std::vector<int> num_query_heads = {12, 12, 12, 12, 12, 16, 16, 16, 16, 16, 16, 16, 20, 20, 20, 20};
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
         inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
         struct ggml_tensor * inp_pos = build_inp_pos();
         struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
+        // const int64_t n_embd_gqa =  n_embd_head_v * (num_kv_heads[il]+num_kv_heads[il]+num_query_heads[il]);
+        llama_hparams modified_hparams(hparams);
+
 
         for (int il = 0; il < n_layer; ++il) {
             auto residual = inpL;
-            llama_hparams modified_hparams(hparams);
+            // TODO: Want the offsets to be calculated with the num heads at layer level
+            // This doesn't work at the moment
+            // const int64_t n_head_kv =  num_kv_heads[il]+num_kv_heads[il]+num_query_heads[il];
+            // modified_hparams.n_head_kv = n_head_kv;
+            const int64_t n_embd_gqa =  n_embd_head_v * n_head_kv;
             // self-attention
             {
                 struct ggml_tensor* attn_norm_output = llm_build_norm(ctx0, inpL, modified_hparams,
@@ -10708,7 +10716,7 @@ struct llm_build_context {
             inpL = cur;
         }
 
-        cur = llm_build_norm(ctx0, inpL, hparams,
+        cur = llm_build_norm(ctx0, inpL, modified_hparams,
             model.output_norm,
             NULL,
             LLM_NORM_RMS, cb, -1);
