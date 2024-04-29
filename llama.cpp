@@ -10670,24 +10670,19 @@ struct llm_build_context {
                 Qcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd,     n_tokens, cur->nb[1], 0 * sizeof(float) * (n_embd)));
                 Kcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_k_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd)));
                 Vcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_v_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd + n_embd_k_gqa)));
-
-
-
                 // Q/K Layernorm
-                    Qcur = llm_build_norm(ctx0, Qcur, modified_hparams,
-                            model.layers[il].attn_q_norm,
-                            NULL,
-                            LLM_NORM_RMS, cb, il);
-                    cb(Qcur, "Qcur", il);
-
-                    Kcur = llm_build_norm(ctx0, Kcur, modified_hparams,
-                            model.layers[il].attn_k_norm,
-                            NULL,
-                            LLM_NORM_RMS, cb, il);
-                    cb(Kcur, "Kcur", il);
-
+                Qcur = llm_build_norm(ctx0, Qcur, modified_hparams,
+                        model.layers[il].attn_q_norm,
+                        NULL,
+                        LLM_NORM_RMS, cb, il);
                 cb(Qcur, "Qcur", il);
+
+                Kcur = llm_build_norm(ctx0, Kcur, modified_hparams,
+                        model.layers[il].attn_k_norm,
+                        NULL,
+                        LLM_NORM_RMS, cb, il);
                 cb(Kcur, "Kcur", il);
+
                 cb(Vcur, "Vcur", il);
 
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head,  n_head,    n_tokens);
@@ -10712,17 +10707,14 @@ struct llm_build_context {
                      model.layers[il].wo, NULL,
                     Kcur, Vcur, Qcur, KQ_mask, nullptr, n_ctx, n_tokens, kv_head, n_kv, 1.0f, cb, il);
             }
-
             if (il == n_layer - 1) {
                 // skip computing output for unused tokens
                 struct ggml_tensor* inp_out_ids = build_inp_out_ids();
                 cur = ggml_get_rows(ctx0, cur, inp_out_ids);
                 residual = ggml_get_rows(ctx0, residual, inp_out_ids);
             }
-
             cur = ggml_add(ctx0, cur, residual);
             residual = cur;
-
             cur = llm_build_norm(ctx0, cur, modified_hparams,
                 model.layers[il].ffn_norm, NULL,
                 LLM_NORM_RMS, cb, il);
