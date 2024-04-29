@@ -5998,9 +5998,9 @@ static bool llm_load_tensors(
                     const int64_t n_kv =  (num_kv_heads[i]+num_kv_heads[i])*n_embd_head;
                     modified_hparams.n_head = n_head;
                     modified_hparams.n_head_kv = n_head_kv;
-                    const int64_t n_embd_gqa =  n_embd_head * n_head;//n_embd_head * n_head;
-                    const int64_t n_embd_k_gqa =  modified_hparams.n_embd_k_gqa();//n_embd_head_k * n_head_k;
-                    const int64_t n_embd_v_gqa =  modified_hparams.n_embd_v_gqa();//n_embd_head_v * n_head_v;
+                    const int64_t n_embd_gqa =  n_embd_head * n_head;
+                    const int64_t n_embd_k_gqa =  modified_hparams.n_embd_k_gqa();
+                    const int64_t n_embd_v_gqa =  modified_hparams.n_embd_v_gqa();
                     const int64_t ffn_inter = make_divisible(n_embd*ffn_multipliers[i], 256);
 
 
@@ -10740,9 +10740,9 @@ struct llm_build_context {
             const int64_t n_kv =  (num_kv_heads[il]+num_kv_heads[il])*n_embd_head;
             modified_hparams.n_head = n_head;
             modified_hparams.n_head_kv = n_head_kv;
-            const int64_t n_embd_gqa =  n_embd_head * n_head;//n_embd_head * n_head;
-            const int64_t n_embd_k_gqa =  modified_hparams.n_embd_k_gqa();//n_embd_head_k * n_head_k;
-            const int64_t n_embd_v_gqa =  modified_hparams.n_embd_v_gqa();//n_embd_head_v * n_head_v;
+            const int64_t n_embd_gqa =  n_embd_head * n_head;
+            const int64_t n_embd_k_gqa =  modified_hparams.n_embd_k_gqa();
+            const int64_t n_embd_v_gqa =  modified_hparams.n_embd_v_gqa();
 
             // self-attention
             {
