@@ -3144,9 +3144,17 @@ struct llama_model_loader {
 
         fver = (enum llama_fver) gguf_get_version(meta);
 
+        std::set<std::string> tensor_names;
         for (auto & w : weights) {
             n_elements += ggml_nelements(w.tensor);
             n_bytes    += ggml_nbytes(w.tensor);
+            // make sure there is no duplicated tensor names
+            const std::string name(w.tensor->name);
+            auto found = tensor_names.find(name);
+            if (found != tensor_names.end()) {
+                throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", w.tensor->name));
+            }
+            tensor_names.insert(name);
         }
 
         LLAMA_LOG_INFO("%s: loaded meta data with %d key-value pairs and %d tensors from %s (version %s)\n",
@@ -17933,9 +17941,9 @@ const char * llama_print_system_info(void) {
     s += "VSX = "         + std::to_string(ggml_cpu_has_vsx())         + " | ";
     s += "MATMUL_INT8 = " + std::to_string(ggml_cpu_has_matmul_int8()) + " | ";
 #ifdef GGML_USE_LLAMAFILE
-    s += "LAMMAFILE = 1 | ";
+    s += "LLAMAFILE = 1 | ";
 #else
-    s += "LAMMAFILE = 0 | ";
+    s += "LLAMAFILE = 0 | ";
 #endif
 
     return s.c_str();
