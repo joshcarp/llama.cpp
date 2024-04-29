@@ -3402,7 +3402,7 @@ struct llama_model_loader {
                     break;
                 }
             }
-            if (false and (!is_ok) ){ // TODO: Fix this for OpenElm
+            if (!is_ok){
                 throw std::runtime_error(
                         format("%s: tensor '%s' has wrong shape; expected %s, got %s",
                             __func__, name.c_str(),
@@ -3453,7 +3453,7 @@ struct llama_model_loader {
     }
 
     void done_getting_tensors() const {
-        if (false){//if (n_created != n_tensors) { // TODO: Fix this for OpenElm
+        if (n_created != n_tensors) {
             throw std::runtime_error(format("%s: wrong number of tensors; expected %d, got %d", __func__, n_tensors, n_created));
         }
     }
@@ -4710,6 +4710,22 @@ static void llm_load_print_meta(llama_model_loader & ml, llama_model & model) {
     if (vocab.special_eot_id    != -1) { LLAMA_LOG_INFO( "%s: EOT token        = %d '%s'\n", __func__, vocab.special_eot_id,    vocab.id_to_token[vocab.special_eot_id].text.c_str() );    }
 }
 
+float make_divisible(
+    double v,
+    int divisor = 8,
+    float min_value = 0.0
+) {
+    if (min_value == 0.0) {
+        min_value = divisor;
+    }
+    float rounded_v = int((v + divisor / 2) / divisor) * divisor;
+    float new_v = (min_value > rounded_v)? min_value : rounded_v;
+    if (new_v < 0.9 * v) {
+        new_v += divisor;
+    }
+    return new_v;
+}
+
 // Returns false if cancelled by progress_callback
 static bool llm_load_tensors(
         llama_model_loader & ml,
@@ -5961,25 +5977,44 @@ static bool llm_load_tensors(
                 } break;
             case LLM_ARCH_OPENELM:
             {
-                model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, false);
+                std::vector<int> num_kv_heads = {3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5};
+                std::vector<int> num_query_heads = {12, 12, 12, 12, 12, 16, 16, 16, 16, 16, 16, 16, 20, 20, 20, 20};
+                std::vector<float> ffn_multipliers = {0.5, 0.73, 0.97, 1.2, 1.43, 1.67, 1.9, 2.13, 2.37, 2.6, 2.83, 3.07, 3.3, 3.53, 3.77, 4.0};
+                llama_hparams modified_hparams(hparams);
+                const int64_t n_embd_head = hparams.n_embd_head_v;
+
+                model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab });
                 {
-                    model.output_norm = ml.create_tensor(ctx_output, tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }, false); // todo: remove false
+                    model.output_norm = ml.create_tensor(ctx_output, tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }); // todo: remove false
                     model.output = ml.create_tensor(ctx_output, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
                     ml.n_created--; // artificial tensor
                     ml.size_data += ggml_nbytes(model.output);
                 }
                 for (int i = 0; i < n_layer; ++i) {
+                    const int64_t n_head_k = num_kv_heads[i];
+                    const int64_t n_head_v = num_kv_heads[i];
+                    const int64_t n_head_kv = n_head_k+n_head_v;
+                    const int64_t n_head =  n_head_kv+ num_query_heads[i];
+                    const int64_t n_kv =  (num_kv_heads[i]+num_kv_heads[i])*n_embd_head;
+                    modified_hparams.n_head = n_head;
+                    modified_hparams.n_head_kv = n_head_kv;
+                    const int64_t n_embd_gqa =  n_embd_head * n_head;//n_embd_head * n_head;
+                    const int64_t n_embd_k_gqa =  modified_hparams.n_embd_k_gqa();//n_embd_head_k * n_head_k;
+                    const int64_t n_embd_v_gqa =  modified_hparams.n_embd_v_gqa();//n_embd_head_v * n_head_v;
+                    const int64_t ffn_inter = make_divisible(n_embd*ffn_multipliers[i], 256);
+
+
                     ggml_context* ctx_layer = ctx_for_layer(i);
                     ggml_context* ctx_split = ctx_for_layer_split(i);
                     auto& layer = model.layers[i];
-                    layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), { n_embd }, false);
-                    layer.attn_k_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), { n_embd }, false);
-                    layer.attn_q_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), { n_embd }, false);
-                    layer.wqkv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_QKV, "weight", i), { n_embd, n_embd + 2 * n_embd_gqa }, false);
-                    layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), { n_embd, n_embd }, true);
-                    layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), { n_embd }, false);
-                    layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd }, false);
-                    layer.ffn_up = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP, "weight", i), { n_embd, 2 * n_ff }, false);
+                    layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), { n_embd });
+                    layer.attn_k_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), { n_embd_head });
+                    layer.attn_q_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), {  n_embd_head });
+                    layer.wqkv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_QKV, "weight", i), { n_embd,  n_embd_head*n_head });
+                    layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), { n_head_kv*n_embd_head*2, n_embd });
+                    layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), { n_embd });
+                    layer.ffn_up = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP, "weight", i), { n_embd, 2 * ffn_inter });
+                    layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), { ffn_inter, n_embd });
                 }
             } break;
             default:
@@ -10684,13 +10719,12 @@ struct llm_build_context {
         struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, LLAMA_MAX_NODES, false);
         const int64_t n_embd_head = hparams.n_embd_head_v;
         // TODO: get this from config
-        std::vector<int> num_kv_heads = {3,     3,     3,     3,     3,     4,     4,     4,     4,     4,     4,     4,     5,     5,     5,     5};
+        std::vector<int> num_kv_heads = {3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5};
         std::vector<int> num_query_heads = {12, 12, 12, 12, 12, 16, 16, 16, 16, 16, 16, 16, 20, 20, 20, 20};
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
         inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
         struct ggml_tensor * inp_pos = build_inp_pos();
-        // const int64_t n_embd_gqa =  n_embd_head_v * (num_kv_heads[il]+num_kv_heads[il]+num_query_heads[il]);
         llama_hparams modified_hparams(hparams);
         GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
 
@@ -10777,24 +10811,20 @@ struct llm_build_context {
                 model.layers[il].ffn_norm, NULL,
                 LLM_NORM_RMS, cb, il);
             cb(cur, "ffn_norm", il);
-
             // FF
-            // special-case: the up and gate tensors are merged into a single tensor
-            // TOOD: support into llm_build_ffn
             {
-                struct ggml_tensor* up = ggml_mul_mat(ctx0, model.layers[il].ffn_up, cur);
-                cb(up, "ffn_up", il);
 
-                auto g = ggml_cont(ctx0, ggml_view_2d(ctx0, up, up->ne[0] / 2, up->ne[1], ggml_row_size(up->type, up->ne[0]), 0));
-                auto y = ggml_cont(ctx0, ggml_view_2d(ctx0, up, up->ne[0] / 2, up->ne[1], ggml_row_size(up->type, up->ne[0]), up->nb[1] / 2));
+                cur = llm_build_norm(ctx0, cur, hparams,
+                model.layers[il].ffn_norm, NULL,
+                LLM_NORM_RMS, cb, il);
+                cb(cur, "ffn_norm", il);
 
-                y = ggml_mul(ctx0, y, ggml_silu(ctx0, g));
-                cb(y, "ffn_gate", il);
-
-                auto down = ggml_mul_mat(ctx0, model.layers[il].ffn_down, y);
-                cb(down, "ffn_down", il);
-
-                cur = down;
+                cur = llm_build_ffn(ctx0, cur,
+                    model.layers[il].ffn_up,   NULL,
+                    NULL, NULL,
+                    model.layers[il].ffn_down, NULL,
+                    NULL,
+                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
                 cb(cur, "ffn_out", il);
             }
 
@@ -10816,7 +10846,7 @@ struct llm_build_context {
         ggml_build_forward_expand(gf, cur);
 
         return gf;
-    };
+    }
 };
 
 static struct ggml_cgraph * llama_build_graph_defrag(llama_context & lctx, const std::vector<uint32_t> & ids) {
