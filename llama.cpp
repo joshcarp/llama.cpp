@@ -1040,7 +1040,7 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
                 { LLM_TENSOR_OUTPUT_NORM,     "output_norm" },
                 { LLM_TENSOR_ATTN_OUT,          "blk.%d.attn_output" },
                 { LLM_TENSOR_ATTN_K_NORM,       "blk.%d.attn_k_norm" },
-                { LLM_TENSOR_ATTN_Q_NORM,        "blk.%d.attn_qkv" },
+                { LLM_TENSOR_ATTN_Q_NORM,        "blk.%d.attn_q_norm" },
                 { LLM_TENSOR_ATTN_QKV,          "blk.%d.attn_qkv" },
                 { LLM_TENSOR_ATTN_NORM,          "blk.%d.attn_norm" },
                 { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
@@ -5915,6 +5915,8 @@ static bool llm_load_tensors(
                     ggml_context* ctx_split = ctx_for_layer_split(i);
                     auto& layer = model.layers[i];
                     layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), { n_embd }, false);
+                    layer.attn_k_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), { n_embd }, false);
+                    layer.attn_q_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), { n_embd }, false);
                     layer.wqkv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_QKV, "weight", i), { n_embd, n_embd + 2 * n_embd_gqa }, false);
                     layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), { n_embd, n_embd }, true);
                     layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), { n_embd }, false);
@@ -10632,6 +10634,7 @@ struct llm_build_context {
         struct ggml_tensor * inp_pos = build_inp_pos();
         // const int64_t n_embd_gqa =  n_embd_head_v * (num_kv_heads[il]+num_kv_heads[il]+num_query_heads[il]);
         llama_hparams modified_hparams(hparams);
+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
 
 
         for (int il = 0; il < n_layer; ++il) {
@@ -10640,7 +10643,7 @@ struct llm_build_context {
             // This doesn't work at the moment, comment out to test
             const int64_t n_head_k = num_kv_heads[il];
             const int64_t n_head_v = num_kv_heads[il];
-            const int64_t n_head_kv = num_kv_heads[il]+num_kv_heads[il];
+            const int64_t n_head_kv = n_head_k+n_head_v;
             const int64_t n_head =  n_head_kv+ num_query_heads[il];
             const int64_t n_kv =  (num_kv_heads[il]+num_kv_heads[il])*n_embd_head;
             modified_hparams.n_head = n_head;
@@ -10667,6 +10670,21 @@ struct llm_build_context {
                 Qcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd,     n_tokens, cur->nb[1], 0 * sizeof(float) * (n_embd)));
                 Kcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_k_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd)));
                 Vcur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, n_embd_v_gqa, n_tokens, cur->nb[1], 1 * sizeof(float) * (n_embd + n_embd_k_gqa)));
+
+
+
+                // Q/K Layernorm
+                    Qcur = llm_build_norm(ctx0, Qcur, modified_hparams,
+                            model.layers[il].attn_q_norm,
+                            NULL,
+                            LLM_NORM_RMS, cb, il);
+                    cb(Qcur, "Qcur", il);
+
+                    Kcur = llm_build_norm(ctx0, Kcur, modified_hparams,
+                            model.layers[il].attn_k_norm,
+                            NULL,
+                            LLM_NORM_RMS, cb, il);
+                    cb(Kcur, "Kcur", il);
 
                 cb(Qcur, "Qcur", il);
                 cb(Kcur, "Kcur", il);
